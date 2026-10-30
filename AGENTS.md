@@ -110,7 +110,7 @@ src/ui/raster.zig     the CPU renderer (same pixels as shader.metal)
 src/ui/canvas.zig     a CPU-drawn window's pixels: only what a frame changed is drawn
 src/ui/opengl.zig     the OpenGL 3.3 renderer (Linux), and OpenGL ES 3's (Android); shader.glsl: both Metal shaders in GLSL
 src/ui/gl.zig         OpenGL's functions, loaded with dlopen
-src/ui/images.zig     pictures (ui.image): decoded once, packed in a BGRA atlas
+src/ui/images.zig     pictures (ui.image): decoded or copied once, packed in a BGRA atlas
 src/ui/png_decode.zig PNG to pixels where ImageIO isn't (Linux, Windows, portable)
 src/platform.zig      what differs by OS below the UI (event loop, clipboard)
 src/linux/            GTK 3 backend: app, window, surface (GL area or CPU), dialogs, fd watches
