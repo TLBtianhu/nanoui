@@ -2,7 +2,8 @@
 //! renderer draws (only what changed, in bands across threads: ui.Canvas),
 //! presented through a Direct3D 11 flip swap chain
 //! (d3d.zig; GDI copies them where there's no Direct3D), fed the mouse,
-//! the wheel, keys and typed characters from the window procedure. Frames
+//! the wheel, keys, typed characters and the input method's composition
+//! from the window procedure. Frames
 //! run on input and while something animates (a 60 Hz timer); idle,
 //! nothing runs.
 const std = @import("std");
@@ -19,6 +20,7 @@ const Theme = @import("../ui/theme.zig").Theme;
 const Context = ctx_mod.Context;
 const Window = @import("window.zig").Window;
 const d3d = @import("d3d.zig");
+const ime = @import("ime.zig");
 
 /// Posted for a frame requested from outside the view.
 pub const WM_FRAME = w.WM_APP + 1;
@@ -46,6 +48,8 @@ pub const Surface = struct {
     /// A UTF-16 high surrogate waiting for its other half.
     high: u16 = 0,
     chars: [8]u8 = undefined,
+    /// The input method's composition, between its messages.
+    ime: ime.State = .{},
     /// Frames go to the screen through this, once made; GDI if it can't be.
     presenter: ?d3d.Presenter = null,
     no_d3d: bool = false,
@@ -59,6 +63,7 @@ pub const Surface = struct {
     }
 
     pub fn destroy(self: *Surface) void {
+        self.ime.deinit(self.gpa);
         if (self.presenter) |*p| p.deinit();
         self.instances.deinit(self.gpa);
         self.pixels.deinit(self.gpa);
@@ -275,8 +280,57 @@ pub const Surface = struct {
                     self.frame();
                 }
             },
-            w.WM_KEYDOWN, w.WM_SYSKEYDOWN => if (self.keyDown(@intCast(wp))) return 0 else return null,
-            w.WM_CHAR => self.char(@truncate(wp)),
+            w.WM_KEYDOWN, w.WM_SYSKEYDOWN => {
+                // Composing: the keys are the input method's (its caret,
+                // its candidates, Return to commit), not the view's.
+                if (self.ime.composing) return 0;
+                if (self.keyDown(@intCast(wp))) return 0 else return null;
+            },
+            w.WM_CHAR, w.WM_IME_CHAR => self.char(@truncate(wp)),
+            // nanoui draws the composition itself, in the text field: the
+            // IME's strings become text ops, and its windows follow the
+            // caret.
+            w.WM_IME_STARTCOMPOSITION => {
+                self.ime.composing = true;
+                ime.follow(h, &self.ctx, self.scale);
+                return 0;
+            },
+            w.WM_IME_COMPOSITION => {
+                // Returning 0, not DefWindowProc: its default handling
+                // sends WM_IME_CHAR for the result string, which would put
+                // the committed text in a second time.
+                if (ime.compose(&self.ime, h, @intCast(lp), self.gpa)) |ops| {
+                    self.ctx.input.ops = ops;
+                    self.frame();
+                    self.ctx.input.ops = &.{};
+                }
+                ime.follow(h, &self.ctx, self.scale);
+                return 0;
+            },
+            w.WM_IME_ENDCOMPOSITION => {
+                var op: [1]ctx_mod.TextOp = undefined;
+                const ops = ime.end(&self.ime, &op);
+                if (ops.len > 0) {
+                    self.ctx.input.ops = ops;
+                    self.frame();
+                    self.ctx.input.ops = &.{};
+                }
+                return 0;
+            },
+            w.WM_IME_SETCONTEXT => {
+                // The composition goes with the window's focus: no key may
+                // stay the input method's once the window is active again.
+                if (wp == 0) {
+                    var op: [1]ctx_mod.TextOp = undefined;
+                    const ops = ime.end(&self.ime, &op);
+                    if (ops.len > 0) {
+                        self.ctx.input.ops = ops;
+                        self.frame();
+                        self.ctx.input.ops = &.{};
+                    }
+                }
+                return ime.setContext(h, msg, wp, lp);
+            },
             else => return null,
         }
         return 0;
