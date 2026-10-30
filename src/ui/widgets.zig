@@ -8,6 +8,7 @@ const Context = ctx_mod.Context;
 const Interaction = ctx_mod.Interaction;
 const Color = types.Color;
 const Style = types.Style;
+const ImageSource = @import("images.zig").Source;
 
 /// Gives the next box a key, so its id (and its animations, scroll, caret)
 /// follow it when boxes before it come and go: items of lists.
@@ -114,11 +115,13 @@ pub fn icon(c: *Context, name: []const u8, opts: IconOptions) void {
 }
 
 pub const ImageOptions = struct {
-    /// Names the picture: the same key is decoded once.
+    /// Names the picture: its bytes or pixels are read once for each size
+    /// it is drawn at, so new content needs a key of its own.
     key: []const u8,
-    /// The encoded picture (PNG; on macOS anything ImageIO reads), kept by
+    /// The picture: its encoded bytes (PNG; on macOS anything ImageIO
+    /// reads), or pixels the app already has (BGRA, premultiplied). Kept by
     /// the caller while it is shown.
-    bytes: []const u8,
+    source: ImageSource,
     /// The most room it takes, in points; it keeps its proportions and is
     /// never drawn larger than its pixels at `scale`.
     max_width: f32 = 480,
@@ -133,15 +136,15 @@ pub const ImageOptions = struct {
     tint: ?types.Color = null,
 };
 
-/// A picture; false (and nothing drawn) if it can't be decoded.
+/// A picture; false (and nothing drawn) if it can't be read.
 pub fn image(c: *Context, opts: ImageOptions) bool {
     const k = @import("images.zig").Images.key(opts.key);
     // Sized from the picture's header; decoded at device size and packed only when drawn.
-    const e = c.text.images.info(k, opts.bytes) orelse return false;
+    const e = c.text.images.info(k, opts.source) orelse return false;
     const w: f32 = @as(f32, @floatFromInt(e.width)) / @max(opts.scale, 0.5);
     const h: f32 = @as(f32, @floatFromInt(e.height)) / @max(opts.scale, 0.5);
     const s = @min(1, @min(opts.max_width / @max(w, 1), opts.max_height / @max(h, 1)));
-    _ = c.leaf(.{ .width = .{ .px = @round(w * s) }, .height = .{ .px = @round(h * s) }, .radius = opts.radius }, .{ .image = .{ .key = k, .bytes = opts.bytes, .opacity = opts.opacity, .tint = opts.tint } }, null);
+    _ = c.leaf(.{ .width = .{ .px = @round(w * s) }, .height = .{ .px = @round(h * s) }, .radius = opts.radius }, .{ .image = .{ .key = k, .source = opts.source, .opacity = opts.opacity, .tint = opts.tint } }, null);
     return true;
 }
 
@@ -179,7 +182,7 @@ pub fn svg(c: *Context, opts: SvgOptions) bool {
     hasher.update(std.mem.asBytes(&[4]f32{ cur.r, cur.g, cur.b, cur.a }));
     const k = hasher.final();
     _ = c.text.images.infoSvg(k, opts.bytes, .{ .width = pw, .height = ph, .current = .{ cur.r, cur.g, cur.b, cur.a } }) orelse return false;
-    _ = c.leaf(.{ .width = .{ .px = w }, .height = .{ .px = h } }, .{ .image = .{ .key = k, .bytes = opts.bytes, .opacity = opts.opacity, .tint = opts.color, .snap = true } }, null);
+    _ = c.leaf(.{ .width = .{ .px = w }, .height = .{ .px = h } }, .{ .image = .{ .key = k, .source = .{ .encoded = opts.bytes }, .opacity = opts.opacity, .tint = opts.color, .snap = true } }, null);
     return true;
 }
 
