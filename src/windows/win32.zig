@@ -97,6 +97,8 @@ pub extern "user32" fn SetWindowPos(hwnd: HWND, after: ?HWND, x: i32, y: i32, w:
 pub extern "user32" fn SetWindowTextW(hwnd: HWND, text: [*:0]const u16) callconv(.winapi) BOOL;
 pub extern "user32" fn SetWindowLongPtrW(hwnd: HWND, index: i32, value: isize) callconv(.winapi) isize;
 pub extern "user32" fn GetWindowLongPtrW(hwnd: HWND, index: i32) callconv(.winapi) isize;
+pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, key: u32, alpha: u8, flags: u32) callconv(.winapi) BOOL;
+pub extern "user32" fn GetLayeredWindowAttributes(hwnd: HWND, key: ?*u32, alpha: ?*u8, flags: ?*u32) callconv(.winapi) BOOL;
 pub extern "user32" fn AdjustWindowRectEx(rect: *RECT, style: u32, menu: BOOL, ex: u32) callconv(.winapi) BOOL;
 pub extern "user32" fn GetSystemMetrics(index: i32) callconv(.winapi) i32;
 pub extern "user32" fn SetCapture(hwnd: HWND) callconv(.winapi) ?HWND;
@@ -149,11 +151,21 @@ pub const WM_DPICHANGED = 0x02E0;
 pub const WM_APP = 0x8000;
 
 pub const WS_OVERLAPPEDWINDOW = 0x00CF0000;
+pub const WS_POPUP = 0x80000000;
 pub const WS_THICKFRAME = 0x00040000;
 pub const WS_MAXIMIZEBOX = 0x00010000;
+pub const WS_EX_LAYERED = 0x00080000;
+pub const WS_EX_TOOLWINDOW = 0x00000080;
 pub const CS_DBLCLKS = 0x0008;
 pub const CW_USEDEFAULT: i32 = @bitCast(@as(u32, 0x80000000));
 pub const GWLP_USERDATA = -21;
+pub const GWL_EXSTYLE = -20;
+pub const SWP_NOSIZE = 0x0001;
+pub const SWP_NOMOVE = 0x0002;
+pub const SWP_NOZORDER = 0x0004;
+pub const SWP_NOACTIVATE = 0x0010;
+pub const SWP_FRAMECHANGED = 0x0020;
+pub const LWA_ALPHA = 0x00000002;
 
 /// UTF-16 of `s`, null-terminated, in `buf` (truncated to fit).
 pub fn wide(buf: []u16, s: []const u8) [*:0]const u16 {

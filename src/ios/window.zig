@@ -144,6 +144,8 @@ pub const Window = struct {
     pub fn setMinSize(_: *Window, _: f64, _: f64) void {}
     pub fn setResizable(_: *Window, _: bool) void {}
     pub fn setAlwaysOnTop(_: *Window, _: bool) void {}
+    /// A screen is opaque: no window opacity.
+    pub fn setOpacity(_: *Window, _: f64) void {}
 
     pub fn isFullScreen(_: *Window) bool {
         return true;

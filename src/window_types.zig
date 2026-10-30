@@ -1,5 +1,6 @@
 //! What windows are made of, the same on every platform: their options,
 //! a page's or a native view's content, and the files pages are served.
+const std = @import("std");
 const ui = @import("ui/ui.zig");
 
 /// A file served to pages at `nanoui://localhost<path>`.
@@ -33,6 +34,12 @@ pub const TitleBar = enum {
     popover,
 };
 
+/// `value` as an opacity: 0.0 to 1.0, and 0.0 for NaN.
+pub fn clampOpacity(value: f64) f64 {
+    if (!(value > 0)) return 0;
+    return @min(value, 1);
+}
+
 pub fn Callback(comptime Window: type) type {
     return struct {
         ctx: *anyopaque,
@@ -59,6 +66,17 @@ pub fn Options(comptime Window: type) type {
         min_width: f64 = 200,
         min_height: f64 = 150,
         resizable: bool = true,
+        /// The system's title bar and frame. Without them the window is
+        /// borderless; `resizable` still gives it edges to drag. Windows,
+        /// macOS and Linux; elsewhere it changes nothing.
+        decorations: bool = true,
+        /// The whole window's opacity, content included: 1 is opaque, 0
+        /// invisible; clamped to 0–1. Windows, macOS and Linux; elsewhere
+        /// it changes nothing.
+        opacity: f64 = 1.0,
+        /// Kept out of the taskbar and Alt+Tab (Windows, Linux). macOS has
+        /// no per-window taskbar entry: there it changes nothing.
+        skip_taskbar: bool = false,
         title_bar: TitleBar = .default,
         /// Native UI's colors, fixed; the system's light or dark when null.
         theme: ?ui.Theme = null,
@@ -107,3 +125,13 @@ pub const NativeView = struct {
     scale: f32,
     theme: ?ui.Theme,
 };
+
+test "opacity is clamped to 0–1, and NaN is 0" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(f64, 0), clampOpacity(-0.5));
+    try testing.expectEqual(@as(f64, 0), clampOpacity(std.math.nan(f64)));
+    try testing.expectEqual(@as(f64, 0), clampOpacity(0));
+    try testing.expectEqual(@as(f64, 0.5), clampOpacity(0.5));
+    try testing.expectEqual(@as(f64, 1), clampOpacity(1));
+    try testing.expectEqual(@as(f64, 1), clampOpacity(2));
+}

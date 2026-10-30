@@ -51,6 +51,11 @@ pub const Window = struct {
         self.setTitle(options.title);
         g.gtk_window_set_default_size(win, @intFromFloat(options.width), @intFromFloat(options.height));
         g.gtk_window_set_resizable(win, @intFromBool(options.resizable));
+        g.gtk_window_set_decorated(win, @intFromBool(options.decorations));
+        // TODO: GTK 4 has no taskbar hint (on Wayland the compositor decides).
+        if (options.skip_taskbar and !gtk.v4) gtk.v3.gtk_window_set_skip_taskbar_hint(win, 1);
+        const opacity = window_types.clampOpacity(options.opacity);
+        if (opacity < 1) g.gtk_widget_set_opacity(win, opacity);
         gtk.connect(win, "destroy", @ptrCast(&onDestroy), self);
         self.surface = try Surface.create(self, self.view.?, options.theme);
         if (options.x != null and options.y != null) self.setPosition(options.x.?, options.y.?) else self.center();
@@ -144,6 +149,13 @@ pub const Window = struct {
     pub fn setAlwaysOnTop(self: *Window, on: bool) void {
         const win = self.gtkwindow orelse return;
         if (!gtk.v4) gtk.v3.gtk_window_set_keep_above(win, @intFromBool(on));
+    }
+
+    /// The whole window's opacity, content included: 1 is opaque, 0
+    /// invisible; GTK composites it.
+    pub fn setOpacity(self: *Window, value: f64) void {
+        const win = self.gtkwindow orelse return;
+        gtk.api.gtk_widget_set_opacity(win, window_types.clampOpacity(value));
     }
 
     pub fn isFullScreen(self: *Window) bool {

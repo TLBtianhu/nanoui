@@ -20,6 +20,27 @@ pub const Frame = struct { x: f64, y: f64, width: f64, height: f64 };
 const class_name = std.unicode.utf8ToUtf16LeStringLiteral("NanoUIWindow");
 var registered = false;
 
+/// A window with a system frame, or a borderless popup that keeps its
+/// resize edges when it can be resized.
+fn windowStyle(decorations: bool, resizable: bool) u32 {
+    var style: u32 = if (decorations) w.WS_OVERLAPPEDWINDOW else w.WS_POPUP;
+    if (!resizable) {
+        style &= ~@as(u32, w.WS_THICKFRAME | w.WS_MAXIMIZEBOX);
+    } else if (!decorations) {
+        style |= w.WS_THICKFRAME;
+    }
+    return style;
+}
+
+/// Layered when translucent (constant alpha), a tool window when it stays
+/// out of the taskbar and Alt+Tab.
+fn windowExStyle(skip_taskbar: bool, opacity: f64) u32 {
+    var ex: u32 = 0;
+    if (skip_taskbar) ex |= w.WS_EX_TOOLWINDOW;
+    if (window_types.clampOpacity(opacity) < 1) ex |= w.WS_EX_LAYERED;
+    return ex;
+}
+
 pub const Window = struct {
     app: *App,
     /// Null when headless (snapshots).
@@ -35,11 +56,31 @@ pub const Window = struct {
     theme: ?ui.Theme = null,
     min_width: f64 = 0,
     min_height: f64 = 0,
+    /// The window and extended styles it was made with (`setOpacity` may
+    /// add and remove `WS_EX_LAYERED`).
+    style: u32 = w.WS_OVERLAPPEDWINDOW,
+    ex_style: u32 = 0,
+    opacity: f64 = 1,
 
     pub fn create(app: *App, options: Options) !*Window {
         const self = try app.gpa.create(Window);
         errdefer app.gpa.destroy(self);
-        self.* = .{ .app = app, .title_bar = options.title_bar, .on_close = options.on_close, .width = options.width, .height = options.height, .theme = options.theme, .min_width = options.min_width, .min_height = options.min_height };
+        const style = windowStyle(options.decorations, options.resizable);
+        const ex_style = windowExStyle(options.skip_taskbar, options.opacity);
+        const opacity = window_types.clampOpacity(options.opacity);
+        self.* = .{
+            .app = app,
+            .title_bar = options.title_bar,
+            .on_close = options.on_close,
+            .width = options.width,
+            .height = options.height,
+            .theme = options.theme,
+            .min_width = options.min_width,
+            .min_height = options.min_height,
+            .style = style,
+            .ex_style = ex_style,
+            .opacity = opacity,
+        };
         switch (options.content) {
             .page => return error.PagesUnsupported,
             .view => |v| self.view = v,
@@ -53,11 +94,10 @@ pub const Window = struct {
         }
         self.surface = try Surface.create(self, self.view.?, options.theme);
         var title: [512]u16 = undefined;
-        var style: u32 = w.WS_OVERLAPPEDWINDOW;
-        if (!options.resizable) style &= ~@as(u32, w.WS_THICKFRAME | w.WS_MAXIMIZEBOX);
-        const hwnd = w.CreateWindowExW(0, class_name, w.wide(&title, options.title), style, w.CW_USEDEFAULT, w.CW_USEDEFAULT, 100, 100, null, null, inst, null) orelse return error.CreateWindow;
+        const hwnd = w.CreateWindowExW(ex_style, class_name, w.wide(&title, options.title), style, w.CW_USEDEFAULT, w.CW_USEDEFAULT, 100, 100, null, null, inst, null) orelse return error.CreateWindow;
         self.hwnd = hwnd;
         _ = w.SetWindowLongPtrW(hwnd, w.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+        if (opacity < 1) self.setOpacity(opacity);
         self.setSize(options.width, options.height);
         if (options.x != null and options.y != null) self.setPosition(options.x.?, options.y.?) else self.center();
         if (!app.flags.hidden and options.visible) self.show();
@@ -136,7 +176,7 @@ pub const Window = struct {
         const h = self.hwnd orelse return;
         const s = self.dpiScale();
         var r: w.RECT = .{ .right = @intFromFloat(width * s), .bottom = @intFromFloat(height * s) };
-        _ = w.AdjustWindowRectEx(&r, w.WS_OVERLAPPEDWINDOW, 0, 0);
+        _ = w.AdjustWindowRectEx(&r, self.style, 0, self.ex_style);
         _ = w.SetWindowPos(h, null, 0, 0, r.right - r.left, r.bottom - r.top, 0x0002 | 0x0004); // no move, no z-order
     }
 
@@ -169,6 +209,35 @@ pub const Window = struct {
         const h = self.hwnd orelse return;
         const topmost: isize = if (on) -1 else -2;
         _ = w.SetWindowPos(h, @ptrFromInt(@as(usize, @bitCast(topmost))), 0, 0, 0, 0, 0x0001 | 0x0002);
+    }
+
+    /// The whole window's opacity, content included: 1 is opaque, 0
+    /// invisible; clamped to 0–1. Runtime changes are applied at once.
+    pub fn setOpacity(self: *Window, value: f64) void {
+        const opacity = window_types.clampOpacity(value);
+        self.opacity = opacity;
+        if (self.hwnd) |h| {
+            if (opacity < 1) {
+                if (self.ex_style & w.WS_EX_LAYERED == 0) self.setExStyle(self.ex_style | w.WS_EX_LAYERED);
+                const alpha: u8 = @intFromFloat(@round(opacity * 255));
+                _ = w.SetLayeredWindowAttributes(h, 0, alpha, w.LWA_ALPHA);
+            } else if (self.ex_style & w.WS_EX_LAYERED != 0) {
+                // Opaque again: 255 first (the style can't go while layered),
+                // then the style itself.
+                _ = w.SetLayeredWindowAttributes(h, 0, 255, w.LWA_ALPHA);
+                self.setExStyle(self.ex_style & ~@as(u32, w.WS_EX_LAYERED));
+            }
+        }
+        // SetLayeredWindowAttributes doesn't apply to a DXGI flip swap chain,
+        // so a translucent window is presented by GDI instead.
+        if (self.surface) |s| s.setOpacity(opacity);
+    }
+
+    fn setExStyle(self: *Window, ex_style: u32) void {
+        const h = self.hwnd orelse return;
+        self.ex_style = ex_style;
+        _ = w.SetWindowLongPtrW(h, w.GWL_EXSTYLE, @intCast(ex_style));
+        _ = w.SetWindowPos(h, null, 0, 0, 0, 0, w.SWP_NOMOVE | w.SWP_NOSIZE | w.SWP_NOZORDER | w.SWP_NOACTIVATE | w.SWP_FRAMECHANGED);
     }
 
     pub fn isFullScreen(self: *Window) bool {

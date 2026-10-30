@@ -40,14 +40,20 @@ pub const Window = struct {
         errdefer app.gpa.destroy(self);
 
         const popover = options.title_bar == .popover;
-        var style: objc.NSUInteger = 1 | 2 | 4; // titled, closable, miniaturizable
+        const borderless = !options.decorations and !popover;
+        // A borderless window has no frame style at all; it still resizes.
+        var style: objc.NSUInteger = if (options.decorations) 1 | 2 | 4 else 0; // titled, closable, miniaturizable
         if (options.resizable) style |= 8;
-        if (options.title_bar == .hidden) style |= 1 << 15; // full size content view
+        if (options.decorations and options.title_bar == .hidden) style |= 1 << 15; // full size content view
         if (popover) style = 1 << 7; // borderless, non-activating panel
         if (options.non_activating) style |= 1 << 7;
         const rect: objc.CGRect = .{ .size = .{ .width = options.width, .height = options.height } };
-        // A borderless panel takes keys only if its class says it can.
+        // A borderless window takes keys only if its class says it can.
+        const borderless_name: [:0]const u8 = if (options.kind == .panel) "NanoUIBorderlessPanel" else "NanoUIBorderlessWindow";
+        const borderless_super: [:0]const u8 = if (options.kind == .panel) "NSPanel" else "NSWindow";
         const window_class = if (popover) objc.defineClass(.{ .name = "NanoUIPopover", .superclass = "NSPanel", .methods = &.{
+            .{ .name = "canBecomeKeyWindow", .imp = &yes, .types = "B@:" },
+        } }) else if (borderless) objc.defineClass(.{ .name = borderless_name, .superclass = borderless_super, .methods = &.{
             .{ .name = "canBecomeKeyWindow", .imp = &yes, .types = "B@:" },
         } }) else if (options.kind == .panel) objc.class("NSPanel") else objc.class("NSWindow");
         const nswindow = objc.msg(objc.Object, objc.msg(objc.Object, window_class, "alloc", .{}), "initWithContentRect:styleMask:backing:defer:", .{
@@ -59,7 +65,7 @@ pub const Window = struct {
         objc.msg(void, nswindow, "setReleasedWhenClosed:", .{objc.NO});
         objc.msg(void, nswindow, "setTitle:", .{objc.nsString(options.title)});
         objc.msg(void, nswindow, "setContentMinSize:", .{objc.CGSize{ .width = options.min_width, .height = options.min_height }});
-        if (options.title_bar == .hidden) {
+        if (options.decorations and options.title_bar == .hidden) {
             objc.msg(void, nswindow, "setTitlebarAppearsTransparent:", .{objc.YES});
             objc.msg(void, nswindow, "setTitleVisibility:", .{@as(objc.NSInteger, 1)});
         }
@@ -124,6 +130,9 @@ pub const Window = struct {
             _ = objc.msg(objc.BOOL, nswindow, "setFrameAutosaveName:", .{objc.nsString(name)});
         }
         if (options.always_on_top or options.floating) self.setAlwaysOnTop(true);
+        if (window_types.clampOpacity(options.opacity) < 1) self.setOpacity(options.opacity);
+        // TODO: skip_taskbar, if it ever means anything here: the Dock and
+        // ⌘-Tab list apps, not windows.
         if (!app.flags.hidden and options.visible) objc.msg(void, nswindow, "makeKeyAndOrderFront:", .{@as(?objc.Object, null)});
         if (app.debug) self.logFrame();
         return self;
@@ -202,6 +211,12 @@ pub const Window = struct {
     /// Keeps the window above other apps' windows.
     pub fn setAlwaysOnTop(self: *Window, on: bool) void {
         objc.msg(void, self.nswindow, "setLevel:", .{@as(objc.NSInteger, if (on) 3 else 0)}); // NSFloatingWindowLevel
+    }
+
+    /// The whole window's opacity, content and frame included: 1 is
+    /// opaque, 0 invisible; clamped to 0–1.
+    pub fn setOpacity(self: *Window, value: f64) void {
+        objc.msg(void, self.nswindow, "setAlphaValue:", .{window_types.clampOpacity(value)});
     }
 
     pub fn isFullScreen(self: *Window) bool {

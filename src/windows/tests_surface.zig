@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const w = @import("win32.zig");
 const ui = @import("../ui/ui.zig");
 const App = @import("app.zig").App;
 
@@ -73,4 +74,51 @@ test "a motion click and its animated frames draw through a hidden Windows surfa
             .textures = s.ctx.textures.items,
         });
     }
+}
+
+test "borderless, translucent and tool-window styles, and opacity at run time" {
+    const gpa = testing.allocator;
+    const app = try gpa.create(App);
+    app.* = .{
+        .gpa = gpa,
+        .io = std.Io.Threaded.global_single_threaded.io(),
+        .options = .{ .quit_on_last_window_closed = false },
+        .flags = .{ .hidden = true },
+        .gui = true,
+    };
+    defer app.destroy();
+    var p: Page = .{};
+    const win = try app.newWindow(.{
+        .title = "hidden styles test",
+        .width = 240,
+        .height = 160,
+        .visible = false,
+        .decorations = false,
+        .opacity = 0.5,
+        .skip_taskbar = true,
+        .content = .{ .view = .init(&p, Page.view) },
+    });
+    try testing.expectEqual(@as(u32, w.WS_POPUP | w.WS_THICKFRAME), win.style);
+    try testing.expectEqual(@as(u32, w.WS_EX_LAYERED | w.WS_EX_TOOLWINDOW), win.ex_style);
+    const h = win.hwnd.?;
+    const ex: u32 = @intCast(w.GetWindowLongPtrW(h, w.GWL_EXSTYLE));
+    try testing.expect(ex & w.WS_EX_LAYERED != 0);
+    try testing.expect(ex & w.WS_EX_TOOLWINDOW != 0);
+    var alpha: u8 = 0;
+    try testing.expect(w.GetLayeredWindowAttributes(h, null, &alpha, null) != 0);
+    try testing.expectEqual(@as(u8, 128), alpha);
+    // Constant alpha and a flip swap chain don't go together: GDI draws.
+    try testing.expect(win.surface.?.no_d3d);
+
+    win.setOpacity(1);
+    try testing.expectEqual(@as(f64, 1), win.opacity);
+    try testing.expectEqual(@as(u32, w.WS_EX_TOOLWINDOW), win.ex_style);
+    const ex_opaque: u32 = @intCast(w.GetWindowLongPtrW(h, w.GWL_EXSTYLE));
+    try testing.expect(ex_opaque & w.WS_EX_LAYERED == 0);
+    try testing.expect(!win.surface.?.no_d3d);
+
+    win.setOpacity(-1); // clamped to 0: invisible, but still there
+    try testing.expectEqual(@as(f64, 0), win.opacity);
+    try testing.expect(win.ex_style & w.WS_EX_LAYERED != 0);
+    try testing.expect(win.surface.?.no_d3d);
 }

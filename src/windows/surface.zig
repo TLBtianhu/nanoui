@@ -107,6 +107,19 @@ pub const Surface = struct {
         _ = w.PostMessageW(h, WM_FRAME, 0, 0);
     }
 
+    /// The window's opacity: below 1, GDI presents the frames, since
+    /// SetLayeredWindowAttributes does not apply to a DXGI flip swap chain
+    /// (the compositor presents its back buffers itself). Opaque again,
+    /// the next frame makes a Direct3D presenter.
+    pub fn setOpacity(self: *Surface, opacity: f64) void {
+        const translucent = opacity < 1;
+        if (translucent == self.no_d3d) return;
+        if (self.presenter) |*p| p.deinit();
+        self.presenter = null;
+        self.no_d3d = translucent;
+        if (self.hwnd()) |h| _ = w.InvalidateRect(h, null, 0);
+    }
+
     fn shown(self: *Surface) canvas.Frame {
         return .{ .instances = self.instances.items, .text = &self.text, .clear = self.ctx.theme.background, .size = self.size, .scale = self.scale, .textures = self.ctx.textures.items };
     }
