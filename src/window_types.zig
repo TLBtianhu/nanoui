@@ -48,6 +48,15 @@ pub fn ShouldClose(comptime Window: type) type {
     };
 }
 
+/// Files and folders dropped on a window, in the order the system listed
+/// them. `paths` are UTF-8 and owned by the caller of the event: they are
+/// valid only during `onPaths` (copy what is kept). Windows only for now;
+/// nothing fires where a platform has no drop event.
+pub const DropHandler = struct {
+    context: *anyopaque,
+    onPaths: *const fn (context: *anyopaque, paths: []const []const u8) void,
+};
+
 /// A window, or a panel (`NSPanel`: a floating palette, a popover's window).
 pub const Kind = enum { window, panel };
 
@@ -119,7 +128,11 @@ pub fn Options(comptime Window: type) type {
         floating: bool = false,
         /// On every Space, and beside full-screen windows.
         all_spaces: bool = false,
-        /// A panel that takes clicks without making its app active.
+        /// A panel that takes clicks without making its app active. On
+        /// Windows that is `WS_EX_NOACTIVATE` and `SW_SHOWNOACTIVATE`: the
+        /// window is shown, takes clicks, and never takes the foreground,
+        /// the keyboard or a taskbar button — a probe or a heads-up panel
+        /// that must not interrupt what the user is doing.
         non_activating: bool = false,
         /// Never merged into another window's tabs.
         tabbing_disallowed: bool = true,

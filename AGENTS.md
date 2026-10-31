@@ -104,7 +104,8 @@ src/ui/motion/        ui.motion: springs, tweens, presence, keyframes, layout,
 src/ui/tester.zig     views without a window: input, time, PNG snapshots
 src/ui/tests.zig      widget tests through the Tester
 src/ui/text_tt.zig    text where nanoui shapes it itself (Linux, Windows, Android)
-src/ui/tt/            TrueType: font files, the installed fonts, outlines to coverage
+src/ui/tt/            TrueType: font files, the installed fonts (mapped, and
+                      indexed between starts: fontmap, fontindex), outlines to coverage
 src/ui/atlas_tt.zig   the glyph atlas in memory; icons.zig: line icons
 src/ui/raster.zig     the CPU renderer (same pixels as shader.metal)
 src/ui/canvas.zig     a CPU-drawn window's pixels: only what a frame changed is drawn
@@ -116,6 +117,7 @@ src/platform.zig      what differs by OS below the UI (event loop, clipboard)
 src/linux/            GTK 3 backend: app, window, surface (GL area or CPU), dialogs, fd watches
 src/windows/          Win32 backend: app, window, surface (events, frames) +
                       surface_gpu (paint, D3D11 present), d3d (swap chain),
+                      frame_timing (the frame log's Windows half),
                       ime (IMM32), win32 (the extern layer), desktop, dialog,
                       fdwatch, loop, tests_*
 src/ios/              UIKit backend: app and scenes, windows as stacked screens,

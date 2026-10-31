@@ -22,6 +22,8 @@ const d3d = @import("d3d.zig");
 const d3d11 = @import("../ui/d3d11.zig");
 const gpu_side = @import("surface_gpu.zig");
 const ime = @import("ime.zig");
+const frame_log_mod = @import("../ui/frame_log.zig");
+const frame_timing = @import("frame_timing.zig");
 
 /// Posted for a frame requested from outside the view.
 pub const WM_FRAME = w.WM_APP + 1;
@@ -84,15 +86,27 @@ pub const Surface = struct {
     /// `NANOUI_DUMP`: F12 writes the canvas beside the same frame drawn whole.
     dump_enabled: bool = false,
     dumps: usize = 0,
+    /// Per-frame times, when a caller asks with `recordFrames`: one null
+    /// check a frame and nothing else until then.
+    frame_log: ?frame_log_mod.FrameLog = null,
+    /// The record the next `WM_PAINT` belongs to, and when the last ended.
+    timing: frame_timing.Timing = .{},
 
     pub fn create(window: *Window, view: ui.View, theme_override: ?Theme) !*Surface {
         const gpa = window.app.gpa;
         const self = try gpa.create(Surface);
         self.* = .{ .gpa = gpa, .window = window, .text = .init(gpa), .ctx = undefined, .view = view, .theme_override = theme_override, .start_time = clock.now() };
+        // Where the font scan's result is kept between starts, when the app
+        // named both (`ui.App`'s options): `fontdb` stays as it was without them.
+        self.text.db.cache_path = window.app.options.font_cache;
+        self.text.db.fonts_dir = window.app.options.fonts_dir;
         self.ctx = .init(gpa, &self.text);
         // Diagnostics, off unless asked for: which presenter draws the frame,
         // how many threads draw it, and F12 dumping the canvas.
-        self.no_d3d = envFlag("NANOUI_NO_D3D");
+        // `App.Options.gdi` asks for GDI too, for an app that wants no D3D
+        // device at all; `NANOUI_NO_D3D` is the same for a run that cannot
+        // pass an option.
+        self.no_d3d = window.app.options.gdi or envFlag("NANOUI_NO_D3D");
         self.dump_enabled = envFlag("NANOUI_DUMP");
         if (envFlag("NANOUI_ONE_THREAD")) @import("../ui/raster.zig").threads = 1;
         // Frames come from Direct3D 11 here (`paintGpu`), so the view names it
@@ -109,11 +123,20 @@ pub const Surface = struct {
         gpu_side.release(self);
         // The IME's scratch buffers: three ArrayLists that outlive a frame.
         self.ime.deinit(self.gpa);
+        if (self.frame_log) |*fl| fl.deinit();
         self.instances.deinit(self.gpa);
         self.pixels.deinit(self.gpa);
         self.ctx.deinit();
         self.text.deinit();
         self.gpa.destroy(self);
+    }
+
+    /// Starts logging every frame's times (a warm-up can run first: records
+    /// begin at the call). The log is in memory unless `FrameLog.path` is
+    /// set afterwards; one allocation, no file written here.
+    pub fn recordFrames(self: *Surface, gpa: std.mem.Allocator) !*frame_log_mod.FrameLog {
+        if (self.frame_log == null) self.frame_log = try frame_log_mod.FrameLog.init(gpa, null);
+        return &self.frame_log.?;
     }
 
     fn hwnd(self: *Surface) ?w.HWND {
@@ -194,6 +217,9 @@ pub const Surface = struct {
         if (!more) if (c.frame_in) |s| if (self.hwnd()) |h| {
             _ = w.SetTimer(h, later_timer, @intFromFloat(@max(1, s * 1000)), null);
         };
+        // The frame asked for the window to be painted; the `WM_PAINT` that
+        // follows fills in its canvas and presentation (`frame_timing.zig`).
+        if (self.frame_log) |*fl| frame_timing.Timing.appendFrame(&self.timing, fl, c, now, dt, !self.no_d3d);
     }
 
     /// Whether two theme choices pick the same theme (both null: the system's).

@@ -12,6 +12,16 @@ const Window = window_mod.Window;
 pub const Options = struct {
     name: []const u8 = "nanoui",
     quit_on_last_window_closed: bool = true,
+    /// Where the font scan's result is cached, and the folder that cache
+    /// describes (the app's, kept for the process's life). Both null: the
+    /// scan runs every start, as before.
+    font_cache: ?[]const u8 = null,
+    fonts_dir: ?[]const u8 = null,
+    /// Draw frames straight to the window with GDI instead of making a D3D11
+    /// device and flip swap chain. No vsync and no GPU uploads, but a D3D
+    /// device costs tens of megabytes (driver DLLs and threads) that a small
+    /// utility window may not want to pay. `--mem-probe --gdi` measures both.
+    gdi: bool = false,
     // The macOS app's hooks, accepted here and not called yet.
     ctx: ?*anyopaque = null,
     on_open_urls: ?*const fn (ctx: ?*anyopaque, urls: []const []const u8) void = null,
@@ -61,6 +71,9 @@ pub const App = struct {
         const flags = try dev.Flags.parse(init);
         self.* = .{ .gpa = gpa, .io = init.io, .options = options, .flags = flags, .debug = init.environ_map.get("NANOUI_DEBUG") != null };
         self.gui = flags.snapshot == null and flags.generate_dir == null;
+        // Cold-start marks on stderr, for apps that do not turn them on
+        // themselves (`ui.trace.enabled`); off by default.
+        if (init.environ_map.get("NANOUI_TRACE") != null) ui.trace.enabled = true;
         // Pixels, not stretched bitmaps: nanoui draws at the monitor's DPI,
         // per monitor — a window carried to another screen hears about it
         // (`WM_DPICHANGED`) and rescales. Before Windows 10 1607 there is no

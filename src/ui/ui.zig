@@ -48,6 +48,8 @@ pub const access = @import("access.zig");
 pub const keys = @import("keys.zig");
 /// A monotonic clock in seconds.
 pub const clock = @import("clock.zig");
+/// Cold-start timing marks: off unless the app or `NANOUI_TRACE=1` asks.
+pub const trace = @import("trace.zig");
 /// PNG files from pixels (and back, `png_decode`).
 pub const png = @import("png.zig");
 

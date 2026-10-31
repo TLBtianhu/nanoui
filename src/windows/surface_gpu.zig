@@ -12,6 +12,8 @@ const raster = @import("../ui/raster.zig");
 const types = @import("../ui/types.zig");
 const surface = @import("surface.zig");
 const Surface = surface.Surface;
+const clock = @import("../ui/clock.zig");
+const frame_timing = @import("frame_timing.zig");
 
 /// Whether this frame may go through D3D at all: the window is opaque and no
 /// device failure is known. A layered window's alpha (`opacity` below 1) is
@@ -170,6 +172,8 @@ pub fn invalidate(self: *Surface) void {
 /// canvas and a GDI copy. `WM_PAINT` arrives only when something invalidated,
 /// and `BeginPaint` clears the region: painting is the frame's output.
 pub fn paint(self: *Surface, h: w.HWND) void {
+    const logging = self.frame_log != null;
+    const t_paint = if (logging) clock.now() else 0;
     var ps: w.PAINTSTRUCT = undefined;
     const dc = w.BeginPaint(h, &ps) orelse return;
     defer _ = w.EndPaint(h, &ps);
@@ -189,17 +193,38 @@ pub fn paint(self: *Surface, h: w.HWND) void {
     // a DXGI flip-model swap chain, so a GPU frame would not fade. Below 1 the
     // canvas draws the frame and GDI copies the pixels into the layered
     // window, which does show the alpha; at 1 the GPU is picked back up.
-    if (wantsGpu(self) and paintGpu(self, h)) return;
+    if (wantsGpu(self) and paintGpu(self, h)) {
+        // The GPU drew the whole frame: no canvas, so the presentation is
+        // everything from here to `EndPaint`.
+        painted(self, logging, t_paint, t_paint);
+        return;
+    }
     self.pixels.draw(self.gpa, shown(self));
+    const t_raster = if (logging) clock.now() else 0;
     const px = &self.pixels;
-    if (px.bytes.len == 0) return;
+    if (px.bytes.len == 0) {
+        painted(self, logging, t_paint, t_raster);
+        return;
+    }
     // The swap chain can show the canvas's pixels too — but never on a
     // layered window, for the same reason `paintGpu` stands down above.
-    if (wantsGpu(self) and present(self, h)) return;
+    if (wantsGpu(self) and present(self, h)) {
+        painted(self, logging, t_paint, t_raster);
+        return;
+    }
     // A negative height: rows from the top, as the renderer writes them.
     // GDI copies only what was invalidated.
     const info: w.BITMAPINFOHEADER = .{ .biWidth = @intCast(px.width), .biHeight = -@as(i32, @intCast(px.height)) };
     _ = w.SetDIBitsToDevice(dc, 0, 0, @intCast(px.width), @intCast(px.height), 0, 0, 0, @intCast(px.height), px.bytes.ptr, &info, 0);
+    painted(self, logging, t_paint, t_raster);
+}
+
+/// Gives the pending frame record its canvas and presentation times, when a
+/// frame log is running. `BeginPaint` and `EndPaint` stay outside both, as
+/// they were outside the frame.
+fn painted(self: *Surface, logging: bool, t_paint: f64, t_raster: f64) void {
+    if (!logging) return;
+    if (self.frame_log) |*fl| frame_timing.Timing.painted(&self.timing, fl, t_paint, t_raster);
 }
 
 /// `NANOUI_DUMP`, on F12: draws the frame whole beside what the canvas

@@ -56,7 +56,10 @@ pub fn build(b: *std.Build) void {
         // The D3D11 renderer (`ui/d3d11.zig`): d3d11 and dxgi are the
         // system's, and d3dcompiler_47 turns the HLSL into shaders at
         // startup (it ships with Windows and every DirectX runtime).
-        for ([_][]const u8{ "d3d11", "dxgi", "d3dcompiler_47" }) |l| nanoui.linkSystemLibrary(l, .{});
+        // shell32 has the drag-and-drop entry points (`DragAcceptFiles`,
+        // `DragQueryFileW`, `DragFinish` in window.zig) and `ShellExecuteW`
+        // (desktop.zig). Linked with the module, so every app gets them.
+        for ([_][]const u8{ "d3d11", "dxgi", "d3dcompiler_47", "shell32" }) |l| nanoui.linkSystemLibrary(l, .{});
     }
     // Elsewhere GTK is loaded when the app starts (dlopen): nothing to link.
     // HTTP there is http-zig's (nanoui.http), fetched only for those targets.

@@ -7,6 +7,8 @@ pub const HWND = *opaque {};
 pub const HINSTANCE = *opaque {};
 pub const HDC = *opaque {};
 pub const HCURSOR = *opaque {};
+/// A dropped-files list (`WM_DROPFILES.wParam`), freed with `DragFinish`.
+pub const HDROP = *opaque {};
 pub const BOOL = i32;
 pub const WPARAM = usize;
 pub const LPARAM = isize;
@@ -154,6 +156,9 @@ pub extern "kernel32" fn GlobalUnlock(mem: *anyopaque) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GlobalFree(mem: *anyopaque) callconv(.winapi) ?*anyopaque;
 pub extern "kernel32" fn GetEnvironmentVariableW(name: [*:0]const u16, buf: ?[*]u16, size: u32) callconv(.winapi) u32;
 pub extern "shell32" fn ShellExecuteW(hwnd: ?HWND, op: ?[*:0]const u16, file: [*:0]const u16, params: ?[*:0]const u16, dir: ?[*:0]const u16, show: i32) callconv(.winapi) ?*anyopaque;
+pub extern "shell32" fn DragAcceptFiles(hwnd: HWND, accept: BOOL) callconv(.winapi) void;
+pub extern "shell32" fn DragQueryFileW(hdrop: HDROP, index: u32, file: ?[*]u16, chars: u32) callconv(.winapi) u32;
+pub extern "shell32" fn DragFinish(hdrop: HDROP) callconv(.winapi) void;
 pub extern "comdlg32" fn GetOpenFileNameW(ofn: *OPENFILENAMEW) callconv(.winapi) BOOL;
 pub extern "comdlg32" fn GetSaveFileNameW(ofn: *OPENFILENAMEW) callconv(.winapi) BOOL;
 /// OFN_NOCHANGEDIR: a file dialog does not move the process's working
@@ -270,6 +275,8 @@ pub const WM_LBUTTONDBLCLK = 0x0203;
 pub const WM_MOUSEWHEEL = 0x020A;
 /// The sideways wheel (a tilt, a trackpad's two-finger sideways slide).
 pub const WM_MOUSEHWHEEL = 0x020E;
+/// WM_DROPFILES: paths were dropped on the window as a `HDROP` in wParam.
+pub const WM_DROPFILES = 0x0233;
 pub const WM_MOUSELEAVE = 0x02A3;
 /// A move or a resize the user is driving begins and ends; between the two
 /// the window is in its modal sizing loop.
@@ -295,6 +302,10 @@ pub const WS_EX_TOPMOST = 0x00000008;
 pub const WS_EX_APPWINDOW = 0x00040000;
 /// WS_EX_LAYERED is what `SetLayeredWindowAttributes` needs.
 pub const WS_EX_LAYERED = 0x00080000;
+/// WS_EX_NOACTIVATE: a click on the window does not make it the foreground
+/// window (and it takes no keyboard focus); it also keeps the window off the
+/// taskbar. What `Options.non_activating` is made with on Windows.
+pub const WS_EX_NOACTIVATE = 0x08000000;
 
 /// `GetWindowLongPtrW` / `SetWindowLongPtrW`: the extended style.
 pub const GWL_EXSTYLE: i32 = -20;
@@ -306,6 +317,17 @@ pub const LWA_ALPHA = 0x00000002;
 /// chain, which is why `surface.zig` draws with GDI while a window is
 /// translucent (`opacity < 1`).
 pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, key: u32, alpha: u8, flags: u32) callconv(.winapi) BOOL;
+
+/// `ShowWindow`: show without taking the foreground, the keyboard or a
+/// taskbar button (`Options.non_activating`).
+pub const SW_SHOWNOACTIVATE = 4;
+/// `SetWindowPos` flags, for showing a window without moving, resizing,
+/// reordering or activating it.
+pub const SWP_NOSIZE = 0x0001;
+pub const SWP_NOMOVE = 0x0002;
+pub const SWP_NOZORDER = 0x0004;
+pub const SWP_NOACTIVATE = 0x0010;
+pub const SWP_SHOWWINDOW = 0x0040;
 pub const CS_DBLCLKS = 0x0008;
 pub const CW_USEDEFAULT: i32 = @bitCast(@as(u32, 0x80000000));
 pub const GWLP_USERDATA = -21;

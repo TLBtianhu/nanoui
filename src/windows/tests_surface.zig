@@ -199,6 +199,23 @@ test "a window: decorations, skip_taskbar and opacity reach Win32" {
     try testing.expectEqual(@as(f64, 0), sidebar.opacity);
     sidebar.setOpacity(9);
     try testing.expectEqual(@as(f64, 1), sidebar.opacity);
+
+    // A window shown without activation (`non_activating`, macOS's panel:
+    // on Windows that is `WS_EX_NOACTIVATE`, and the default windows do not
+    // carry it).
+    var page_c: Page = .{};
+    const probe = try app.newWindow(.{
+        .title = "probe",
+        .width = 200,
+        .height = 120,
+        .visible = false,
+        .non_activating = true,
+        .content = .{ .view = .init(&page_c, Page.view) },
+    });
+    const oh = probe.hwnd orelse return error.SkipZigTest;
+    try testing.expect(exStyleOf(oh) & w.WS_EX_NOACTIVATE != 0);
+    try testing.expect(exStyleOf(ph) & w.WS_EX_NOACTIVATE == 0);
+    try testing.expect(exStyleOf(sh) & w.WS_EX_NOACTIVATE == 0);
 }
 
 test "a translucent window stands down from Direct3D, draw and present" {
