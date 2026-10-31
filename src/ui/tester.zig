@@ -24,6 +24,7 @@ const Theme = @import("theme.zig").Theme;
 const ctx_mod = @import("context.zig");
 const Context = ctx_mod.Context;
 const View = @import("ui.zig").View;
+const trace = @import("trace.zig");
 
 const runFor = @import("../platform.zig").runFor;
 
@@ -34,6 +35,10 @@ pub const Options = struct {
     dark: bool = false,
     /// Colors of its own, as a window's `theme` option gives.
     theme: ?Theme = null,
+    /// Where the font scan's index is cached and which folder it describes
+    /// (`ui.App`'s options of the same names). Both null: no cache.
+    font_cache: ?[]const u8 = null,
+    fonts_dir: ?[]const u8 = null,
 };
 
 pub const Tester = struct {
@@ -69,9 +74,13 @@ pub const Tester = struct {
             .theme = opts.theme orelse if (opts.dark) Theme.dark_theme else Theme.light,
         };
         t.text.setScale(opts.scale);
+        t.text.db.cache_path = opts.font_cache;
+        t.text.db.fonts_dir = opts.fonts_dir;
         t.ctx = .init(gpa, &t.text);
         t.ctx.clipboard = .{ .ctx = t, .write = clipWrite };
+        trace.mark("tester.text");
         t.frame();
+        trace.mark("tester.frame");
     }
 
     fn clipWrite(ctx: ?*anyopaque, text_: []const u8) void {

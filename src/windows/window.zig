@@ -14,6 +14,7 @@ pub const TitleBar = window_types.TitleBar;
 pub const Callback = window_types.Callback(Window);
 pub const Options = window_types.Options(Window);
 pub const NativeView = window_types.NativeView;
+pub const DropHandler = window_types.DropHandler;
 
 pub const Frame = struct { x: f64, y: f64, width: f64, height: f64 };
 
@@ -35,6 +36,9 @@ pub const Window = struct {
     theme: ?ui.Theme = null,
     min_width: f64 = 0,
     min_height: f64 = 0,
+    /// Files dropped on the window (`WM_DROPFILES`); null until a handler is
+    /// set, and the window is not a drop target before that.
+    drop_handler: ?DropHandler = null,
 
     pub fn create(app: *App, options: Options) !*Window {
         const self = try app.gpa.create(Window);
@@ -55,12 +59,16 @@ pub const Window = struct {
         var title: [512]u16 = undefined;
         var style: u32 = w.WS_OVERLAPPEDWINDOW;
         if (!options.resizable) style &= ~@as(u32, w.WS_THICKFRAME | w.WS_MAXIMIZEBOX);
-        const hwnd = w.CreateWindowExW(0, class_name, w.wide(&title, options.title), style, w.CW_USEDEFAULT, w.CW_USEDEFAULT, 100, 100, null, null, inst, null) orelse return error.CreateWindow;
+        // No activation at all: not on click, not on show, not from the taskbar.
+        const ex: u32 = if (options.no_activate) w.WS_EX_NOACTIVATE else 0;
+        const hwnd = w.CreateWindowExW(ex, class_name, w.wide(&title, options.title), style, w.CW_USEDEFAULT, w.CW_USEDEFAULT, 100, 100, null, null, inst, null) orelse return error.CreateWindow;
         self.hwnd = hwnd;
         _ = w.SetWindowLongPtrW(hwnd, w.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         self.setSize(options.width, options.height);
         if (options.x != null and options.y != null) self.setPosition(options.x.?, options.y.?) else self.center();
-        if (!app.flags.hidden and options.visible) self.show();
+        if (!app.flags.hidden and options.visible) {
+            if (options.no_activate) self.showNoActivate() else self.show();
+        }
         return self;
     }
 
@@ -68,6 +76,43 @@ pub const Window = struct {
         const p = w.GetWindowLongPtrW(hwnd, w.GWLP_USERDATA);
         if (p == 0) return null;
         return @ptrFromInt(@as(usize, @bitCast(p)));
+    }
+
+    /// Files and folders dropped on the window, or none (`null`). Setting one
+    /// registers the window with `DragAcceptFiles`; clearing it unregisters
+    /// it, so windows that never set one stay out of drag-and-drop entirely.
+    /// Windows only; the other platforms have no drop event.
+    pub fn setDropHandler(self: *Window, handler: ?DropHandler) void {
+        self.drop_handler = handler;
+        if (self.hwnd) |h| w.DragAcceptFiles(h, if (handler == null) 0 else 1);
+    }
+
+    /// One `WM_DROPFILES`: read the paths out of the HDROP, then hand them to
+    /// the handler and free the list. The strings live in an arena for the
+    /// duration of the call only.
+    fn dropped(self: *Window, hdrop: w.HDROP) void {
+        defer w.DragFinish(hdrop);
+        const handler = self.drop_handler orelse return;
+        const count = w.DragQueryFileW(hdrop, 0xFFFF_FFFF, null, 0);
+        if (count == 0) return;
+        var arena = std.heap.ArenaAllocator.init(self.app.gpa);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        const paths = allocator.alloc([]const u8, count) catch return;
+        var n: usize = 0;
+        for (0..count) |i| {
+            const index: u32 = @intCast(i);
+            // With no buffer: the length in UTF-16 units, without the terminator.
+            const len = w.DragQueryFileW(hdrop, index, null, 0);
+            if (len == 0) continue;
+            const units = allocator.alloc(u16, len + 1) catch return;
+            const got = w.DragQueryFileW(hdrop, index, units.ptr, @intCast(units.len));
+            if (got == 0) continue;
+            paths[n] = std.unicode.utf16LeToUtf8Alloc(allocator, units[0..got]) catch continue;
+            n += 1;
+        }
+        if (n == 0) return;
+        handler.onPaths(handler.context, paths[0..n]);
     }
 
     fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi) w.LRESULT {
@@ -82,6 +127,12 @@ pub const Window = struct {
             const pts: [*]w.POINT = @ptrFromInt(@as(usize, @bitCast(lp)));
             const s = self.dpiScale();
             pts[3] = .{ .x = @intFromFloat(self.min_width * s), .y = @intFromFloat(self.min_height * s) };
+            return 0;
+        }
+        if (msg == w.WM_DROPFILES) {
+            // Dropping does not activate the window: nothing here takes the
+            // foreground, the focus or the keyboard.
+            if (wp != 0) self.dropped(@ptrFromInt(wp));
             return 0;
         }
         if (self.surface) |s| if (s.handle(hwnd, msg, wp, lp)) |r| return r;
@@ -185,6 +236,16 @@ pub const Window = struct {
         _ = w.ShowWindow(h, 5);
         _ = w.SetForegroundWindow(h);
         _ = w.SetFocus(h);
+    }
+
+    /// Shows it where it is, without taking the foreground, the keyboard or
+    /// a taskbar button: for windows that must never interrupt the user
+    /// (`Options.no_activate`). `ShowWindow(SW_SHOWNOACTIVATE)` sends the
+    /// first `WM_SIZE`/`WM_PAINT` like any show.
+    pub fn showNoActivate(self: *Window) void {
+        const h = self.hwnd orelse return;
+        _ = w.ShowWindow(h, w.SW_SHOWNOACTIVATE);
+        _ = w.SetWindowPos(h, null, 0, 0, 0, 0, w.SWP_NOMOVE | w.SWP_NOSIZE | w.SWP_NOZORDER | w.SWP_NOACTIVATE | w.SWP_SHOWWINDOW);
     }
 
     pub fn hide(self: *Window) void {
