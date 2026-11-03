@@ -39,7 +39,8 @@ Each window shows one of two kinds of interface:
   JavaScript, no webview. It has flexbox layout, text in a glyph atlas,
   animations, and views you can test without a window. On macOS it draws with
   Metal and CoreText, in one instanced draw call per frame.
-- **A web page** in the system webview (WKWebView, macOS for now). The
+- **A web page** in the system webview (WKWebView on macOS, WebView2 on
+  Windows). The
   frontend calls Zig through a JavaScript client generated from your Zig
   types, with TypeScript declarations.
 
@@ -342,7 +343,7 @@ Android's SDK and NDK). On a Mac, `zig build -Dtarget=x86_64-linux-gnu` or
 | rendering | Metal | Metal | OpenGL ES 3; CPU without it | OpenGL 3.3 in a GtkGLArea; CPU (`src/ui/raster.zig`) without one | CPU, shown by Direct3D 11 (a DXGI flip swap chain; GDI without it) |
 | icons | SF Symbols | SF Symbols | line icons drawn by nanoui (`src/ui/icons.zig`) | the same | the same |
 | SVG (`ui.svg`) | drawn by nanoui (`src/ui/svg.zig`) | the same | the same | the same | the same |
-| pages (webview) | WKWebView | not yet | not yet | not yet | not yet |
+| pages (webview) | WKWebView | not yet | not yet | not yet | WebView2 |
 | menus | the menu bar | a keyboard's shortcuts | a keyboard's shortcuts | accelerators | accelerators |
 | HTTP (`nanoui.http`) | NSURLSession | NSURLSession | http-zig, names looked up by Android | [http-zig](https://github.com/justrach/http-zig): HTTP/2 over TLS, a thread per request | the same |
 | input methods that compose text | NSTextInputClient: marked text, the text around the caret, the edit menu | UITextInput: marked text (pinyin), autocorrect, ⌘C ⌘X ⌘V | not yet: a software keyboard types keys | GTK's input method, its preedit | not yet: only what arrives as `WM_CHAR` |
@@ -488,14 +489,18 @@ What you need, an app's build.zig, and what isn't there yet:
       <a href="https://github.com/gstohl/nanomail"><img src="docs/images/nanomail-dark.png" alt="nanomail: a message with links and a picture, shared mailboxes in the sidebar"></a>
       <p><a href="https://github.com/gstohl/nanomail"><strong>nanomail</strong></a>: a JMAP mail client for macOS and iOS. It shows rich mail with links and pictures, loading pictures from the web only when you ask. New mail arrives by push, and mailboxes others share with you appear with what you may do in them. It signs in with a password, a token, or OAuth in the browser.</p>
     </td>
-    <td width="50%" valign="top"></td>
+    <td width="50%" valign="top">
+      <a href="https://github.com/justrach/nanolight"><img src="docs/images/nanolight.jpg" alt="Nanolight: its panel has found Safari from &quot;saf&quot;"></a>
+      <p><a href="https://github.com/justrach/nanolight"><strong>nanolight</strong></a>: a launcher for the Mac, Windows and Linux. It finds apps as you type (initials and typos too), does math, and completes Google searches inline, showing the results in its own panel. It runs Raycast extensions and script commands, and asks Grok or searches X a row away.</p>
+    </td>
   </tr>
 </table>
 
 Download them for macOS:
 [nanoterm](https://github.com/justrach/nanoterm/releases/latest/download/nanoterm-macos-arm64.dmg) ·
 [nanomon](https://github.com/justrach/nanomon/releases/latest/download/nanomon-macos-arm64.dmg) ·
-[nanostudio](https://github.com/justrach/nanostudio/releases/latest/download/nanostudio-macos-arm64.dmg).
+[nanostudio](https://github.com/justrach/nanostudio/releases/latest/download/nanostudio-macos-arm64.dmg) ·
+[nanolight](https://github.com/justrach/nanolight/releases/latest/download/nanolight-macos-arm64.dmg).
 nanomail builds from source for now (`zig build`; its README has iOS).
 
 They live in `apps/` as submodules, and each also builds on its own, fetching
@@ -557,10 +562,11 @@ git push origin v0.2.1`). The release workflow checks that the tag matches
 Rules for working here, by hand or with an agent, are in
 [AGENTS.md](AGENTS.md).
 
-nanoui is a subset of what full frameworks offer. Pages work only on macOS so
-far, accessibility is only on iOS and macOS's built-in controls, there are no
-notifications, channels or plugins yet, and bundling is only for iOS and Android.
-Apps update themselves from GitHub releases on macOS (`nanoui.Updater`). Bound methods run on the main thread.
+nanoui is a subset of what full frameworks offer. Pages work on macOS and
+Windows so far, accessibility is only on iOS and macOS's built-in controls,
+there are no notifications, channels or plugins yet, and bundling is only for
+iOS and Android. Apps update themselves from GitHub releases on macOS, even
+restarting unseen (`nanoui.Updater`). Bound methods run on the main thread.
 
 ## License
 
@@ -577,15 +583,12 @@ nanoui stands on the shoulders of these projects:
   means:
   - the Objective-C runtime called directly, with runtime classes for
     delegates;
-  - a batched outbox with one evaluation per main-loop turn;
-  - events held until the page is ready;
-  - a generated, typed client;
-  - native UI drawn by the framework;
+  - a batched outbox (one evaluation per main-loop turn), held events;
+  - a generated, typed client, and native UI drawn by the framework;
   - Liquid Glass drawn by its own renderers, ported from mygo's glass plugin.
 - **[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)** by
   [Zed Industries](https://zed.dev). From GPUI, nanoui takes:
-  - elements styled by method chains;
-  - the virtualized `uniform_list`;
+  - elements styled by method chains, and the virtualized `uniform_list`;
   - layouts cached across frames, with glyphs rasterized once into an atlas;
   - Gaussian shadows;
   - its general idea of a fast, GPU-drawn native UI.
@@ -593,8 +596,5 @@ nanoui stands on the shoulders of these projects:
   [1keep](https://github.com/1bye): `ui.motion` follows its model and API.
   That covers interruptible targets, presence, keyframes, stagger, layout
   animation, its exact springs and its easing curves.
-- **[GPUI Kit](https://github.com/longbridge/gpui-component)** by
-  [Longbridge](https://github.com/longbridge): `nanoui.kit` follows its
-  components, their variants and their names.
-
+- **[GPUI Kit](https://github.com/longbridge/gpui-component)** by [Longbridge](https://github.com/longbridge): `nanoui.kit` follows its components, their variants and their names.
 <p align="center"><sub>Built in Zig 0.17 · <a href="AGENTS.md">AGENTS.md</a> · <a href="hillclimb/README.md">benchmarks</a> · <a href="LICENSE">MIT</a> · <a href="THIRD_PARTY_NOTICES.md">third-party notices</a></sub></p>
