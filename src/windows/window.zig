@@ -6,6 +6,7 @@ const App = @import("app.zig").App;
 const Surface = @import("surface.zig").Surface;
 const window_types = @import("../window_types.zig");
 const Page = @import("../page_webview2.zig").Page;
+const drop_files = @import("drop_files.zig");
 
 /// The window message a page's queued messages go out on (`Page.flush`):
 /// after the app's own (`WM_APP` onwards, as `fdwatch.zig` allocates them).
@@ -34,7 +35,6 @@ pub const Callback = window_types.Callback(Window);
 pub const ShouldClose = window_types.ShouldClose(Window);
 pub const Options = window_types.Options(Window);
 pub const NativeView = window_types.NativeView;
-pub const DropHandler = window_types.DropHandler;
 
 pub const Frame = struct { x: f64, y: f64, width: f64, height: f64 };
 
@@ -65,14 +65,17 @@ pub const Window = struct {
     /// Window opacity, 0 to 1. Below 1 the surface draws with GDI: see
     /// `setOpacity` for why the GPU path cannot show it.
     opacity: f64 = 1,
-    /// Files dropped on the window (`WM_DROPFILES`); null until a handler is
-    /// set, and the window is not a drop target before that.
-    drop_handler: ?DropHandler = null,
+    /// `Options.transparent`: the frame is the window, alpha and all
+    /// (`layered.zig`).
+    transparent: bool = false,
+
+    /// Resizing changes geometry only, never the foreground window.
+    pub const set_size_flags: u32 = w.SWP_NOMOVE | w.SWP_NOZORDER | w.SWP_NOACTIVATE;
 
     pub fn create(app: *App, options: Options) !*Window {
         const self = try app.gpa.create(Window);
         errdefer app.gpa.destroy(self);
-        self.* = .{ .app = app, .title_bar = options.title_bar, .on_close = options.on_close, .should_close = options.should_close, .on_resize = options.on_resize, .on_key = options.on_key, .on_fullscreen = options.on_fullscreen, .width = options.width, .height = options.height, .theme = options.theme, .min_width = options.min_width, .min_height = options.min_height, .opacity = options.opacity };
+        self.* = .{ .app = app, .title_bar = options.title_bar, .on_close = options.on_close, .should_close = options.should_close, .on_resize = options.on_resize, .on_key = options.on_key, .on_fullscreen = options.on_fullscreen, .width = options.width, .height = options.height, .theme = options.theme, .min_width = options.min_width, .min_height = options.min_height, .opacity = options.opacity, .transparent = options.transparent and !options.decorations };
         // A page is made once the window it fills exists, below.
         var page_options: ?PageOptions = null;
         switch (options.content) {
@@ -101,14 +104,13 @@ pub const Window = struct {
         // `SetLayeredWindowAttributes` do anything at all.
         var ex: u32 = 0;
         if (options.skip_taskbar) ex |= w.WS_EX_TOOLWINDOW;
-        if (options.opacity < 1) ex |= w.WS_EX_LAYERED;
-        // No activation at all: not on click, not on show, and out of the
-        // taskbar — the Windows side of `Options.non_activating` (macOS has
-        // the panel style for it; before this it was ignored here).
+        if (options.opacity < 1 or self.transparent) ex |= w.WS_EX_LAYERED;
+        // No activation on click, show, or through a taskbar button.
         if (options.non_activating) ex |= w.WS_EX_NOACTIVATE;
         const hwnd = w.CreateWindowExW(ex, class_name, w.wide(&title, options.title), style, w.CW_USEDEFAULT, w.CW_USEDEFAULT, 100, 100, null, null, inst, null) orelse return error.CreateWindow;
         self.hwnd = hwnd;
         _ = w.SetWindowLongPtrW(hwnd, w.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+        w.DragAcceptFiles(hwnd, 1);
         self.setSize(options.width, options.height);
         if (options.x != null and options.y != null) self.setPosition(options.x.?, options.y.?) else self.center();
         if (options.always_on_top) self.setAlwaysOnTop(true);
@@ -116,7 +118,6 @@ pub const Window = struct {
         // needs `WS_EX_LAYERED` to have been set when it was made — or set just
         // now, which `setOpacity` does for a window that was made opaque.
         if (options.opacity < 1) self.setOpacity(options.opacity);
-
         // The page is WebView2's, in the client area the window now has.
         if (page_options) |p| {
             if (Page.create(self, p)) |made| {
@@ -132,9 +133,7 @@ pub const Window = struct {
                 else => return err,
             }
         }
-        if (!app.flags.hidden and options.visible) self.show();
-
-        // Without activation (`Options.non_activating`): shown, not foreground.
+        // Show once: a non-activating window must never take foreground.
         if (!app.flags.hidden and options.visible) {
             if (options.non_activating) self.showNoActivate() else self.show();
         }
@@ -151,6 +150,12 @@ pub const Window = struct {
     /// comes back at 1 (`surface_gpu.zig` has the gate).
     pub fn setOpacity(self: *Window, opacity: f64) void {
         self.opacity = std.math.clamp(opacity, 0, 1);
+        // A transparent window's frames carry the opacity themselves:
+        // `SetLayeredWindowAttributes` would stop `UpdateLayeredWindow`.
+        if (self.transparent) {
+            if (self.surface) |s| s.requestFrame();
+            return;
+        }
         const h = self.hwnd orelse return;
         if (self.opacity < 1) {
             const ex = w.GetWindowLongPtrW(h, w.GWL_EXSTYLE);
@@ -169,43 +174,6 @@ pub const Window = struct {
         const p = w.GetWindowLongPtrW(hwnd, w.GWLP_USERDATA);
         if (p == 0) return null;
         return @ptrFromInt(@as(usize, @bitCast(p)));
-    }
-
-    /// Files and folders dropped on the window, or none (`null`). Setting one
-    /// registers the window with `DragAcceptFiles`; clearing it unregisters
-    /// it, so windows that never set one stay out of drag-and-drop entirely.
-    /// Windows only; the other platforms have no drop event.
-    pub fn setDropHandler(self: *Window, handler: ?DropHandler) void {
-        self.drop_handler = handler;
-        if (self.hwnd) |h| w.DragAcceptFiles(h, if (handler == null) 0 else 1);
-    }
-
-    /// One `WM_DROPFILES`: read the paths out of the HDROP, then hand them to
-    /// the handler and free the list. The strings live in an arena for the
-    /// duration of the call only.
-    fn dropped(self: *Window, hdrop: w.HDROP) void {
-        defer w.DragFinish(hdrop);
-        const handler = self.drop_handler orelse return;
-        const count = w.DragQueryFileW(hdrop, 0xFFFF_FFFF, null, 0);
-        if (count == 0) return;
-        var arena = std.heap.ArenaAllocator.init(self.app.gpa);
-        defer arena.deinit();
-        const allocator = arena.allocator();
-        const paths = allocator.alloc([]const u8, count) catch return;
-        var n: usize = 0;
-        for (0..count) |i| {
-            const index: u32 = @intCast(i);
-            // With no buffer: the length in UTF-16 units, without the terminator.
-            const len = w.DragQueryFileW(hdrop, index, null, 0);
-            if (len == 0) continue;
-            const units = allocator.alloc(u16, len + 1) catch return;
-            const got = w.DragQueryFileW(hdrop, index, units.ptr, @intCast(units.len));
-            if (got == 0) continue;
-            paths[n] = std.unicode.utf16LeToUtf8Alloc(allocator, units[0..got]) catch continue;
-            n += 1;
-        }
-        if (n == 0) return;
-        handler.onPaths(handler.context, paths[0..n]);
     }
 
     fn wndProc(hwnd: w.HWND, msg: u32, wp: w.WPARAM, lp: w.LPARAM) callconv(.winapi) w.LRESULT {
@@ -228,9 +196,8 @@ pub const Window = struct {
             return 0;
         }
         if (msg == w.WM_DROPFILES) {
-            // Dropping does not activate the window: nothing here takes the
-            // foreground, the focus or the keyboard.
-            if (wp != 0) self.dropped(@ptrFromInt(wp));
+            // Dropping does not activate the window: nothing here takes focus.
+            if (wp != 0) drop_files.handle(self.surface, hwnd, @ptrFromInt(wp));
             return 0;
         }
         if (msg == w.WM_GETMINMAXINFO) {
@@ -417,7 +384,7 @@ pub const Window = struct {
         // decorated style's border inflated every borderless window.
         const style: u32 = @bitCast(@as(i32, @truncate(w.GetWindowLongPtrW(h, w.GWL_STYLE))));
         _ = w.AdjustWindowRectEx(&r, style, 0, 0);
-        _ = w.SetWindowPos(h, null, 0, 0, r.right - r.left, r.bottom - r.top, 0x0002 | 0x0004); // no move, no z-order
+        _ = w.SetWindowPos(h, null, 0, 0, r.right - r.left, r.bottom - r.top, set_size_flags);
     }
 
     pub fn setPosition(self: *Window, x: f64, y: f64) void {
@@ -477,10 +444,7 @@ pub const Window = struct {
         _ = w.SetFocus(h);
     }
 
-    /// Shows it where it is, without taking the foreground, the keyboard or
-    /// a taskbar button: for windows that must never interrupt the user
-    /// (`Options.non_activating`). `ShowWindow(SW_SHOWNOACTIVATE)` sends the
-    /// first `WM_SIZE`/`WM_PAINT` like any show.
+    /// Shows without taking foreground, keyboard focus, or a taskbar button.
     pub fn showNoActivate(self: *Window) void {
         const h = self.hwnd orelse return;
         _ = w.ShowWindow(h, w.SW_SHOWNOACTIVATE);

@@ -103,8 +103,8 @@ pub const Window = plat.window.Window;
 pub const WindowOptions = plat.window.Options;
 pub const PageOptions = plat.window.PageOptions;
 pub const Asset = plat.window.Asset;
-/// Typed IPC for pages: wherever a webview draws them (macOS, Windows).
-const has_pages = mac or builtin.os.tag == .windows;
+/// Typed IPC for pages: wherever a webview draws them (macOS, Windows, Linux).
+const has_pages = mac or builtin.os.tag == .windows or (builtin.os.tag == .linux and !is_android);
 const page_ipc = if (has_pages) @import("ipc.zig").ipc(plat.window.Window, plat.app.App) else struct {};
 pub const Call = if (has_pages) page_ipc.Call else void;
 pub const Event = if (has_pages) page_ipc.Event else void;
@@ -181,6 +181,9 @@ test {
             _ = @import("windows/tests_surface.zig");
             // The window's own: styles, sizes, the close veto, the timers.
             _ = @import("windows/tests_window.zig");
+            // File drops: path/URL conversion and one HDROP as one event.
+            _ = @import("windows/drop_files.zig");
+            _ = @import("windows/tests_drop_files.zig");
             // The input method: its own tests, and the file itself for the
             // decode/mapping units.
             _ = @import("windows/ime.zig");
@@ -188,6 +191,8 @@ test {
         }
         // The GTK window's: decorations, the taskbar hint, opacity.
         if (builtin.os.tag == .linux) _ = @import("linux/tests_window.zig");
+        // A page in WebKitGTK, end to end, where one is installed.
+        if (builtin.os.tag == .linux) _ = @import("linux/tests_page.zig");
         return;
     }
     // Analyze every declaration, used by an example or not.
