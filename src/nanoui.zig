@@ -10,6 +10,7 @@
 //!     }
 const std = @import("std");
 const builtin = @import("builtin");
+pub const file_url = @import("file_url.zig");
 
 // Zig 0.17.0's std can't build for iOS as it ships (`tools/ios/zig-lib.sh`).
 comptime {
